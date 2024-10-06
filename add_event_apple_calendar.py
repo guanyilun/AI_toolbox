@@ -1,22 +1,37 @@
 """Add an event to Apple Calendar."""
+
 import dotenv
+
 dotenv.load_dotenv()
 import re
+
+# from openai3p import OpenAI3P # 3rd party OpenAI config
 from openai import OpenAI
-from datetime import datetime 
+from datetime import datetime
 
 
-def get_response(client, prompt, system_message=None, max_tokens=10000, model="gpt-4o"):
+def get_response(
+    client,
+    prompt,
+    system_message=None,
+    max_tokens=5000,
+    model="gpt-4o",  # , model="glm-4-flashx" # 3rd party OpenAI config
+):
     if system_message is None:
-        system_message = "You are a helpful assistant that answer questions and provide guidance."
-    response = client.chat.completions.create(model=model,
+        system_message = (
+            "You are a helpful assistant that answer questions and provide guidance."
+        )
+
+    response = client.chat.completions.create(
+        model=model,
         messages=[
             {"role": "system", "content": system_message},
-            {"role": "user", "content": prompt}
+            {"role": "user", "content": prompt},
         ],
-        max_tokens=max_tokens
+        max_tokens=max_tokens,
     )
     return response.choices[0].message.content
+
 
 def make_applescript(client, event_info):
     script = r"""
@@ -65,24 +80,27 @@ def make_applescript(client, event_info):
     response = get_response(client, prompt)
     return response
 
+
 def parse_applescript(script):
     """parse script from markdown format"""
     # Regular expression pattern to match markdown between triple backticks
     pattern = r"```(?:applescript)?\s*([\s\S]*?)\s*```"
-    
+
     # Find all matches in the response
     matches = re.findall(pattern, script, re.IGNORECASE)
-    
+
     if matches:
         return matches[0].strip()
     else:
         return None
+
 
 if __name__ == "__main__":
     import tempfile
     import os
     import subprocess
 
+    # client = OpenAI3P("https://api.aihao.world", "xxxx") # 3rd party OpenAI config
     client = OpenAI()
     event_details = input("Please provide a brief description of the event: ")
     script = make_applescript(client, event_details)
@@ -90,23 +108,26 @@ if __name__ == "__main__":
     if script is None:
         raise ValueError("Failed to parse AppleScript")
 
-    print("AppleScript:")
-    print(script)
-    
+    print("AppleScript:\n", script)
+
     proceed = input("Do you want to execute the AppleScript? (y/n): ")
-    if proceed.lower() != 'y':
+    if proceed.lower() != "y":
         print("Exiting...")
         exit(0)
 
     # save the AppleScript to a temporary file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.scpt', dir='/tmp', delete=False) as temp_file:
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".scpt", dir="/tmp", delete=False
+    ) as temp_file:
         temp_file.write(script)
         temp_file_path = temp_file.name
 
     print(f"AppleScript saved to: {temp_file_path}")
     # execute the saved AppleScript
     try:
-        result = subprocess.run(['osascript', temp_file_path], capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            ["osascript", temp_file_path], capture_output=True, text=True, check=True
+        )
         print("AppleScript executed successfully.")
         print("Output:", result.stdout)
     except subprocess.CalledProcessError as e:
