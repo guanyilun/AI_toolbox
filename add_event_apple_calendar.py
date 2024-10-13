@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 """Add an event to Apple Calendar."""
 
 import dotenv
@@ -15,7 +17,7 @@ def get_response(
     prompt,
     system_message=None,
     max_tokens=5000,
-    model="gpt-4o",  # , model="glm-4-flashx" # 3rd party OpenAI config
+    model="openai/gpt-4o-mini",  # , model="glm-4-flashx" # 3rd party OpenAI config
 ):
     if system_message is None:
         system_message = (
@@ -100,9 +102,21 @@ if __name__ == "__main__":
     import os
     import subprocess
 
-    # client = OpenAI3P("https://api.aihao.world", "xxxx") # 3rd party OpenAI config
-    client = OpenAI()
-    event_details = input("Please provide a brief description of the event: ")
+    client = OpenAI(
+        base_url=os.getenv("OPENAI_BASE_URL"),
+        api_key=os.getenv("OPENAI_API_KEY")
+    )
+    print("Please provide a brief description of the event.")
+    print("Enter your description, and type 'END' on a new line when you're finished:")
+    
+    event_details = []
+    while True:
+        line = input()
+        if line.strip().upper() == 'END':
+            break
+        event_details.append(line)
+    
+    event_details = "\n".join(event_details)
     script = make_applescript(client, event_details)
     script = parse_applescript(script)
     if script is None:
