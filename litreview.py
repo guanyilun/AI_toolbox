@@ -23,23 +23,28 @@ class LM:
             system_message = (
                 "You are a helpful assistant that answer questions and provide guidance."
             )
-        if len(self.messages) == 0:
-            self.messages = [
+        if add_to_history:
+            if len(self.messages) == 0:
+                self.messages = [
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": prompt},
+                ]
+            else:
+                self.messages.append({"role": "user", "content": prompt})
+            messages = self.messages
+        else:
+            messages = [
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": prompt},
             ]
-        else:
-            self.messages.append({"role": "user", "content": prompt})
 
         response = self.client.chat.completions.create(
             model=self.model,
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": prompt},
-            ],
+            messages=messages,
             max_tokens=max_tokens,
         )
         response_content = response.choices[0].message.content
+
         if add_to_history:
             self.messages.append({"role": "assistant", "content": response_content})
         return response_content
@@ -53,14 +58,34 @@ class LM:
         else:
             self.messages = []
 
+def expand_question(lm, question) -> str:
+    prompt = f"""
+    You are a helpful research assistant that provides advice on literature review.
+    Your task is to expand the research question into a concise one paragraph description.
+    The research question provided within <question> </question> tags.
+    Please provide a more expanded paragraph of the research question that can help in finding
+    the most relevant papers. Provide your response whtin <response> </response> tags.
+
+    Here is the research question:
+    <question>{question}</question>
+
+    Response:
+    """
+    res = lm.get_response(prompt)
+    expanded_question = re.search(r'<response>(.*?)</response>', res).group(1)
+    if not expanded_question:
+        logging.debug(f"Response: {res}")
+        raise ValueError("No expanded question found.")
+    return expanded_question
+
 def get_query_suggestions(lm, question) -> list[str]:
     prompt = f"""
     You are a helpful research assistant that provides advice on literature review.
-    Your task is to suggest search queries for a given research question. The question
-    will be provided within <question> </question> tags.
+    Your task is to suggest ADS search queries for a given research question. The question
+    will be provided within <question></question> tags.
     Please provide a list of search queries that can be used to find the most relevant
     papers related to this question. Provide your response in a structured format with each
-    query suggestion wrapped within <query> </query> tag.
+    query suggestion wrapped within <query></query> tag.
 
     Example:
     <query>cosmic microwave background lensing</query>
@@ -111,7 +136,7 @@ def search_ads(query, num_results=50):
         papers.append({
             "bibcode": paper["bibcode"],
             "title": paper.get("title", [""])[0],
-            "abstract": paper.get("abstract", "")
+            "abstract": paper.get("abstract", ""),
         })
 
     return papers
@@ -227,12 +252,12 @@ def _get_abstract_relevance(lm, question, papers):
         feedback_label = re.search(r'<feedback>(.*?)</feedback>', r).group(1)
         try:
             feedback_score = {
-                'Highly relevant': 3,
-                'Relevant': 2,
-                'Somewhat relevant': 1,
-                'Unsure': 1,
-                'Irrelevant': 0,
-            }[feedback_label]
+                'highly relevant': 3,
+                'relevant': 2,
+                'somewhat relevant': 1,
+                'unsure': 1,
+                'irrelevant': 0,
+            }[feedback_label.lower()]
         except KeyError:
             logging.warning(f"Invalid feedback label: {feedback_label}")
             feedback_score = 1
@@ -284,12 +309,20 @@ if __name__ == '__main__':
         all_papers = {}
         query_stats = {}
         queries = get_query_suggestions(lm['A'], args.question)
+        question = expand_question(lm['S'], args.question)
     else:
         with open(args.output, 'r') as f:
             save_data = json.load(f)
+            question = save_data['question']
             all_papers = save_data['papers']
             query_stats = save_data['query_stats']
             queries = save_data['queries']
+
+    logging.info(f"question: {question}")
+
+    # should we resuggest queries?
+    if input("Do you want to resuggest queries? (y/n): ").lower() == 'y':
+        queries = get_query_suggestions(lm['S'], question)
 
     while len(queries) > 0:
         query = queries.pop(0)
@@ -299,6 +332,7 @@ if __name__ == '__main__':
             query_stats[query] = {}
         else:
             logging.warning(f"Query {query} already processed. Skipping...")
+            time.sleep(5)
             continue
 
         try:
@@ -307,12 +341,14 @@ if __name__ == '__main__':
             logging.error(f"Error processing query: {query}")
             logging.error(e)
             query_stats[query]['error'] = 'bad ads response'
+            time.sleep(5)
             continue
 
         logging.info(f"\tRetrieved {len(candidates)} papers for query: {query}")
 
         if len(candidates) == 0:
             logging.warning(f"No papers found for query: {query}")
+            time.sleep(5)
             continue
 
         # filter out papers already in the list
@@ -322,21 +358,24 @@ if __name__ == '__main__':
         if len(candidates) == 0:
             logging.warning(f"No new papers found for query: {query}")
             query_stats[query]['no_new_papers'] = True
+            time.sleep(5)
             continue
 
         # assess title relevance
         logging.info("\tAssessing title relevance for the papers...")
         try:
-            title_relevances = get_title_relevance(lm['A'], args.question, candidates, batch_size=20)
+            title_relevances = get_title_relevance(lm['A'], question, candidates, batch_size=20)
         except Exception as e:
             logging.error("Error assessing title relevance.")
             logging.error(e)
             query_stats[query]['error'] = 'bad title relevance assessment'
+            time.sleep(5)
             continue
 
         if len(title_relevances) == 0:
             logging.warning("No title relevance feedback received.")
             query_stats[query]['error'] = 'empty title relevance feedback'
+            time.sleep(5)
             continue
 
         # update query stats
@@ -353,20 +392,24 @@ if __name__ == '__main__':
         if len(candidates) == 0:
             logging.warning(f"No relevant titles found for query: {query}")
             query_stats[query]['no_relevant_title'] = True
+            time.sleep(5)
+            continue
 
         # assess abstract relevance
         logging.info("\tAssessing abstract relevance for the papers...")
         try:
-            abstract_relevances = get_abstract_relevance(lm['A'], args.question, candidates, batch_size=5)
+            abstract_relevances = get_abstract_relevance(lm['A'], question, candidates, batch_size=5)
         except Exception as e:
             logging.error("Error assessing abstract relevance.")
             logging.error(e)
             query_stats[query]['error'] = 'bad abstract relevance assessment'
+            time.sleep(5)
             continue
 
         if len(abstract_relevances) == 0:
             logging.warning("No abstract relevance feedback received.")
             query_stats[query]['error'] = 'empty abstract relevance feedback'
+            time.sleep(5)
             continue
 
         n_relevant = len([p for p in abstract_relevances if abstract_relevances[p]>=2])
@@ -381,6 +424,7 @@ if __name__ == '__main__':
         if len(candidates) == 0:
             logging.warning(f"No relevant papers found for query: {query}")
             query_stats[query]['no_relevant_abstract'] = True
+            time.sleep(5)
             continue
 
         n_highly_relevant = len([p for p in abstract_relevances if abstract_relevances[p]==3])
@@ -388,13 +432,12 @@ if __name__ == '__main__':
 
         # find papers cited by the highly relevant papers
         highly_relevant_papers = [p for p in candidates if p['bibcode'] in abstract_relevances and abstract_relevances[p['bibcode']] == 3]
-        _citations_queries = [
-            'citations(bibcode:{})'.format(p['bibcode']) for p in highly_relevant_papers
-        ]
-        _references_queries = [
-            'references(bibcode:{})'.format(p['bibcode']) for p in highly_relevant_papers
-        ]
-        new_queries = _citations_queries + _references_queries
+
+        new_queries = []
+        for p in highly_relevant_papers:
+            new_queries.append('citations(bibcode:{})'.format(p['bibcode']))
+            new_queries.append('references(bibcode:{})'.format(p['bibcode']))
+            
         logging.info(f"\tFound {len(highly_relevant_papers)} highly relevant papers. Adding {len(new_queries)} new queries.")
         queries.extend(new_queries)
 
@@ -409,6 +452,7 @@ if __name__ == '__main__':
             'papers': all_papers,
             'query_stats': query_stats,
             'queries': queries,
+            'question': question,
         }
         logging.info("\tSaving intermediate data...")
         with open(args.output, 'w') as f:
