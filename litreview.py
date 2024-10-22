@@ -126,6 +126,7 @@ def _get_title_relevance(lm, question, papers):
     <paper><bibcode>bibcode</bibcode><feedback>feedback</feedback></paper>
 
     where feedback can be one of the following:
+    - Highly relevant
     - Relevant
     - Somewhat relevant
     - Irrelevant
@@ -156,11 +157,12 @@ def _get_title_relevance(lm, question, papers):
         feedback_label = re.search(r'<feedback>(.*?)</feedback>', r).group(1)
         try:
             feedback_score = {
-                'Relevant': 2,
-                'Somewhat relevant': 1,
-                'Unsure': 1,
-                'Irrelevant': 0,
-            }[feedback_label]
+                'highly relevant': 3,
+                'relevant': 2,
+                'somewhat relevant': 1,
+                'unsure': 1,
+                'irrelevant': 0,
+            }[feedback_label.lower()]
         except KeyError:
             logging.warning(f"Invalid feedback label: {feedback_label}")
             feedback_score = 1
@@ -263,8 +265,12 @@ if __name__ == '__main__':
     # temporary test
     class args:
         question = "The effect of cosmic birefringence on the CMB polarization measurement."
+        output = "./birefringence.json"
+
+    odir = os.path.dirname(args.output)
+    if not os.path.exists(odir):
+        os.makedirs(odir)
         
-    # lm = LM("openai/gpt-4o-mini")
     # model class: S > A > B > C > ...
     lm = {
         'S': LM("openai/gpt-4o"),
@@ -273,43 +279,17 @@ if __name__ == '__main__':
         'C': LM("liquid/lfm-40b"),                            # 32k context, 32k output
     }
 
-    # get some search suggestions
-    # queries = get_query_suggestions(lm['A'], args.question)
-
-    # temp
-    # queries = [
-    #     "cosmic birefringence CMB polarization",
-    #     "impact of birefringence on cosmic microwave background",
-    #     "CMB polarization measurement cosmic birefringence",
-    #     "birefringence effects on cosmic microwave background polarization",
-    #     "cosmic birefringence and its influence on CMB",
-    #     "CMB polarization anisotropy and birefringence",
-    #     "theoretical models of cosmic birefringence CMB",
-    #     "observational constraints on cosmic birefringence CMB polarization",
-    #     "polarization rotation due to cosmic birefringence",
-    #     "effects of isotropic cosmic birefringence on CMB measurements"
-    # ]
-
-    # send each query to ads search api and get the top 50 papers
-    # all_papers = {}
-    # query_stats = {}
     # load intermediate data
-    if not os.path.exists('papers.json'):
+    if not os.path.exists(args.output):
         all_papers = {}
-    else:
-        with open('papers.json', 'r') as f:
-            all_papers = json.load(f)
-    if not os.path.exists('query_stats.json'):
         query_stats = {}
-    else:
-        with open('query_stats.json', 'r') as f:
-            query_stats = json.load(f)
-    
-    if not os.path.exists('queries.json'):
         queries = get_query_suggestions(lm['A'], args.question)
     else:
-        with open('queries.json', 'r') as f:
-            queries = json.load(f)
+        with open(args.output, 'r') as f:
+            save_data = json.load(f)
+            all_papers = save_data['papers']
+            query_stats = save_data['query_stats']
+            queries = save_data['queries']
 
     while len(queries) > 0:
         query = queries.pop(0)
@@ -322,7 +302,7 @@ if __name__ == '__main__':
             continue
 
         try:
-            candidates = search_ads(query, num_results=50)
+            candidates = search_ads(query, num_results=100)
         except Exception as e:
             logging.error(f"Error processing query: {query}")
             logging.error(e)
@@ -347,7 +327,7 @@ if __name__ == '__main__':
         # assess title relevance
         logging.info("\tAssessing title relevance for the papers...")
         try:
-            title_relevances = get_title_relevance(lm['B'], args.question, candidates, batch_size=20)
+            title_relevances = get_title_relevance(lm['A'], args.question, candidates, batch_size=20)
         except Exception as e:
             logging.error("Error assessing title relevance.")
             logging.error(e)
@@ -366,7 +346,8 @@ if __name__ == '__main__':
         query_stats[query]['irrelevant_rate'] = n_irrelevant / len(title_relevances)
 
         # filter out irrelevant papers
-        candidates = [p for p in candidates if p['bibcode'] in title_relevances and title_relevances[p['bibcode']] >= 2]
+        # candidates = [p for p in candidates if p['bibcode'] in title_relevances and title_relevances[p['bibcode']] >= 2]
+        candidates = [p for p in candidates if p['bibcode'] in title_relevances and title_relevances[p['bibcode']] >= 3]
         logging.info(f"\tKeeping only relevant papers, left with {len(candidates)} papers")
 
         if len(candidates) == 0:
@@ -376,7 +357,7 @@ if __name__ == '__main__':
         # assess abstract relevance
         logging.info("\tAssessing abstract relevance for the papers...")
         try:
-            abstract_relevances = get_abstract_relevance(lm['B'], args.question, candidates, batch_size=5)
+            abstract_relevances = get_abstract_relevance(lm['A'], args.question, candidates, batch_size=5)
         except Exception as e:
             logging.error("Error assessing abstract relevance.")
             logging.error(e)
@@ -393,7 +374,8 @@ if __name__ == '__main__':
         logging.info(f"\tFound {n_relevant} relevant and {n_irrelevant} irrelevant papers.")
 
         # filter out irrelevant papers
-        candidates = [p for p in candidates if p['bibcode'] in abstract_relevances and abstract_relevances[p['bibcode']] >= 2]
+        # candidates = [p for p in candidates if p['bibcode'] in abstract_relevances and abstract_relevances[p['bibcode']] >= 2]
+        candidates = [p for p in candidates if p['bibcode'] in abstract_relevances and abstract_relevances[p['bibcode']] >= 3]
         logging.info(f"\tKeeping only relevant papers, left with {len(candidates)} papers")
 
         if len(candidates) == 0:
@@ -423,13 +405,14 @@ if __name__ == '__main__':
         logging.info(f"\tAdded {len(candidates)} new papers to the list. Total papers: {len(all_papers)}")
 
         # save data
+        save_data = {
+            'papers': all_papers,
+            'query_stats': query_stats,
+            'queries': queries,
+        }
         logging.info("\tSaving intermediate data...")
-        with open('papers.json', 'w') as f:
-            json.dump(all_papers, f, indent=2)
-        with open('query_stats.json', 'w') as f:
-            json.dump(query_stats, f, indent=2) 
-        with open('queries.json', 'w') as f:
-            json.dump(queries, f, indent=2)
+        with open(args.output, 'w') as f:
+            json.dump(save_data, f, indent=2)
         
         time.sleep(5)
 
