@@ -63,8 +63,11 @@ def expand_question(lm, question) -> str:
     You are a helpful research assistant that provides advice on literature review.
     Your task is to expand the research question into a concise one paragraph description.
     The research question provided within <question> </question> tags.
-    Please provide a more expanded paragraph of the research question that can help in finding
-    the most relevant papers. Provide your response whtin <response> </response> tags.
+    Please provide a more expanded paragraph of the research question that 
+    can help in finding the most relevant papers. Provide your response within <response> </response> tags.
+
+    Example:
+    <response>expanded paragraph</response>
 
     Here is the research question:
     <question>{question}</question>
