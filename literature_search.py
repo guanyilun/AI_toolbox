@@ -289,11 +289,16 @@ if __name__ == '__main__':
     
     # import argparse
     # parser = argparse.ArgumentParser(description='A literature review tool.')
+    # parser.add_argument('question', type=str, help='The research question to start with.')
+    # parser.add_argument('output', type=str, help='The output file to save the results.')
     # args = parser.parse_args()
+
     # temporary test
     class args:
-        question = "The effect of cosmic birefringence on the CMB polarization measurement."
-        output = "./birefringence.json"
+        # question = "The effect of cosmic birefringence on the CMB polarization measurement."
+        # output = "./birefringence.json"
+        question = "recent progress on the use of faraday rotation modulator (FRM), which is a wide bandwidth linear polarization modulator made of solid-state polarization switches that are capable of modulation up to 10 kHz."
+        output = "./frm.json"
 
     odir = os.path.dirname(args.output)
     if not os.path.exists(odir):
@@ -311,8 +316,13 @@ if __name__ == '__main__':
     if not os.path.exists(args.output):
         all_papers = {}
         query_stats = {}
-        queries = get_query_suggestions(lm['A'], args.question)
-        question = expand_question(lm['S'], args.question)
+        try:
+            question = expand_question(lm['S'], args.question)
+        except Exception as e:
+            logging.error("Error expanding question.")
+            logging.error(e)
+            question = args.question
+        queries = get_query_suggestions(lm['S'], question)
     else:
         with open(args.output, 'r') as f:
             save_data = json.load(f)
@@ -459,7 +469,7 @@ if __name__ == '__main__':
         }
         logging.info("\tSaving intermediate data...")
         with open(args.output, 'w') as f:
-            json.dump(save_data, f, indent=2)
+            json.dump(save_data, f, indent=2, sort_keys=True)
         
         time.sleep(5)
 
